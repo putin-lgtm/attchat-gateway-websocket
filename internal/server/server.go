@@ -50,7 +50,9 @@ func New(cfg *config.Config, roomManager *room.Manager) *Server {
 
 	// Middleware
 	app.Use(recovermw.New())
-	app.Use(logger.New())
+	app.Use(logger.New(logger.Config{
+		Format: "${time} | ${ip} | ${method} ${path} | ${status} | ${latency} | ${ua} | ${error}\n",
+	}))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",

@@ -1,7 +1,7 @@
 # ATTChat Gateway Configuration
 
 server:
-  port: "8080"
+  port: "8082"
   read_timeout: "10s"
   write_timeout: "10s"
 
