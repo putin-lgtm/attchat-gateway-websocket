@@ -40,7 +40,7 @@ COPY --from=builder /gateway /gateway
 COPY config.yaml /config.yaml
 
 # Expose ports
-EXPOSE 8080 9090
+EXPOSE 8086 9090
 
 # Run as non-root user
 USER nonroot:nonroot

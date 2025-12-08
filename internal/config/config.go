@@ -22,8 +22,8 @@ type ServerConfig struct {
 }
 
 type JWTConfig struct {
-	SecretKey     string
-	ValidateExp   bool
+	SecretKey      string
+	ValidateExp    bool
 	AllowedIssuers []string
 }
 
@@ -114,7 +114,7 @@ func Load() (*Config, error) {
 
 func setDefaults() {
 	// Server defaults
-	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.port", "8086")
 	viper.SetDefault("server.read_timeout", "10s")
 	viper.SetDefault("server.write_timeout", "10s")
 
@@ -145,4 +145,3 @@ func setDefaults() {
 	viper.SetDefault("ws.enable_compression", false)
 	viper.SetDefault("ws.max_message_size", 65536) // 64KB
 }
-

@@ -1,12 +1,12 @@
 # ATTChat Gateway Configuration
 
 server:
-  port: "8082"
+  port: "8086"
   read_timeout: "10s"
   write_timeout: "10s"
 
 jwt:
-  secret_key: "change-me-in-production"
+  secret_key: "2b1e1d7c8f9a4e6b3c7d8e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
   validate_exp: true
   allowed_issuers:
     - "attchat"

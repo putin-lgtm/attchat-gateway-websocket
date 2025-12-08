@@ -50,7 +50,7 @@ cd ../attchat-gateway
 go run main.go
 
 # 3. Check health
-curl http://localhost:8080/health
+curl http://localhost:8086/health
 
 # 4. View metrics
 curl http://localhost:9090/metrics
@@ -72,7 +72,7 @@ go build -o gateway .
 ### Connect
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?token=YOUR_JWT_TOKEN');
+const ws = new WebSocket('ws://localhost:8086/ws?token=YOUR_JWT_TOKEN');
 
 ws.onopen = () => {
   console.log('Connected!');
@@ -158,7 +158,7 @@ Available at `:9090/metrics`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_SERVER_PORT` | 8080 | WebSocket server port |
+| `GATEWAY_SERVER_PORT` | 8086 | WebSocket server port |
 | `GATEWAY_NATS_URL` | nats://localhost:4222 | NATS server URL |
 | `GATEWAY_JWT_SECRET_KEY` | (required) | JWT secret key |
 | `GATEWAY_METRICS_PORT` | 9090 | Prometheus metrics port |
@@ -170,7 +170,7 @@ Available at `:9090/metrics`
 
 ```yaml
 server:
-  port: "8080"
+  port: "8086"
   read_timeout: "10s"
   write_timeout: "10s"
 

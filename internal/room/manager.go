@@ -10,6 +10,10 @@ import (
 
 // Manager manages all connections and rooms
 type Manager struct {
+	// Stats (đặt lên đầu để đảm bảo alignment)
+	totalConnections int64
+	totalRooms       int64
+
 	// All connections indexed by ID
 	connections sync.Map // map[string]*Connection
 
@@ -18,10 +22,6 @@ type Manager struct {
 
 	// User to connections mapping (for multi-tab support)
 	userConnections sync.Map // map[string]map[string]*Connection
-
-	// Stats
-	totalConnections int64
-	totalRooms       int64
 }
 
 // NewManager creates a new room manager
@@ -228,4 +228,3 @@ func (m *Manager) GetRoomConnections(roomID string) []*Connection {
 
 	return connections
 }
-

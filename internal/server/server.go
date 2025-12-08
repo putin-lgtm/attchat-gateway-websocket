@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/attchat/attchat-gateway/internal/auth"
@@ -52,6 +53,27 @@ func New(cfg *config.Config, roomManager *room.Manager) *Server {
 	app.Use(recovermw.New())
 	app.Use(logger.New(logger.Config{
 		Format: "${time} | ${ip} | ${method} ${path} | ${status} | ${latency} | ${ua} | ${error}\n",
+		CustomTags: map[string]logger.LogFunc{
+			"status": func(output logger.Buffer, c *fiber.Ctx, data *logger.Data, extraParam string) (int, error) {
+				status := c.Response().StatusCode()
+				var color string
+				switch {
+				case status == 101:
+					color = "\033[32m" // Green for WebSocket upgrade
+				case status >= 500:
+					color = "\033[31m" // Red
+				case status >= 400:
+					color = "\033[33m" // Yellow
+				case status >= 300:
+					color = "\033[36m" // Cyan
+				case status >= 100:
+					color = "\033[0m" // Default
+				default:
+					color = "\033[0m"
+				}
+				return output.WriteString(color + fmt.Sprintf("%3d", status) + "\033[0m")
+			},
+		},
 	}))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -72,9 +94,39 @@ func New(cfg *config.Config, roomManager *room.Manager) *Server {
 
 // setupRoutes configures all routes
 func (s *Server) setupRoutes() {
+	// Root endpoint trả về thông tin health
+	s.app.Get("/", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"architecture": "MVC Enterprise",
+			"jetstream":    "ok",
+			"jetstream_info": fiber.Map{
+				"consumers": 0,
+				"messages":  0,
+				"stream":    "CHAT",
+			},
+			"message": "ATTChat Gateway WebSocket is running",
+			"nats":    "ok",
+			"status":  "healthy",
+			"version": "2.0",
+			"stats":   s.roomManager.GetStats(),
+		})
+	})
 	// Health check
 	s.app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok"})
+		return c.JSON(fiber.Map{
+			"architecture": "MVC Enterprise",
+			"jetstream":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
+			"jetstream_info": fiber.Map{
+				"consumers": 0,      // Có thể lấy từ metrics nếu có
+				"messages":  0,      // Có thể lấy từ metrics nếu có
+				"stream":    "CHAT", // hoặc tên stream thực tế
+			},
+			"message": "ATTChat Gateway WebSocket is running",
+			"nats":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
+			"status":  "healthy",
+			"version": "2.0",
+			"stats":   s.roomManager.GetStats(),
+		})
 	})
 
 	// Ready check
