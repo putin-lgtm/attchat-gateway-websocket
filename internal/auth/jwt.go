@@ -10,20 +10,23 @@ import (
 )
 
 var (
-	ErrInvalidToken     = errors.New("invalid token")
-	ErrExpiredToken     = errors.New("token expired")
-	ErrInvalidClaims    = errors.New("invalid claims")
-	ErrMissingUserID    = errors.New("missing user_id in token")
+	ErrInvalidToken  = errors.New("invalid token")
+	ErrExpiredToken  = errors.New("token expired")
+	ErrInvalidClaims = errors.New("invalid claims")
+	ErrMissingUserID = errors.New("missing user_id in token")
 )
 
 // Claims represents JWT claims for ATTChat
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID   string   `json:"user_id"`
-	BrandID  string   `json:"brand_id"`
-	Role     string   `json:"role"`
-	Rooms    []string `json:"rooms,omitempty"`
-	Type     string   `json:"type"` // "cskh" or "customer"
+	UserID       uint     `json:"user_id"`
+	Username     string   `json:"username"`
+	RoleID       uint     `json:"role_id"`
+	TokenVersion int      `json:"token_version"`
+	BrandID      string   `json:"brand_id,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Rooms        []string `json:"rooms,omitempty"`
+	Type         string   `json:"type,omitempty"` // "cskh" or "customer"
 }
 
 // JWTValidator validates JWT tokens
@@ -65,7 +68,7 @@ func (v *JWTValidator) Validate(tokenString string) (*Claims, error) {
 	}
 
 	// Validate user_id
-	if claims.UserID == "" {
+	if claims.UserID == 0 {
 		return nil, ErrMissingUserID
 	}
 
@@ -98,4 +101,3 @@ func GenerateToken(secretKey string, claims *Claims) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secretKey))
 }
-

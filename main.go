@@ -51,7 +51,7 @@ func main() {
 	go natsConsumer.Start()
 
 	// Initialize and start HTTP/WebSocket server
-	srv := server.New(cfg, roomManager)
+	srv := server.New(cfg, roomManager, natsConsumer)
 	go srv.Start()
 
 	// Graceful shutdown
@@ -90,4 +90,3 @@ func setupLogger() {
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
 }
-

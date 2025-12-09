@@ -9,12 +9,14 @@ import (
 	"github.com/attchat/attchat-gateway/internal/auth"
 	"github.com/attchat/attchat-gateway/internal/config"
 	"github.com/attchat/attchat-gateway/internal/metrics"
+	"github.com/attchat/attchat-gateway/internal/nats"
 	"github.com/attchat/attchat-gateway/internal/room"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	recovermw "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
@@ -25,6 +27,7 @@ type Server struct {
 	cfg          *config.Config
 	roomManager  *room.Manager
 	jwtValidator *auth.JWTValidator
+	nats         *nats.Consumer
 }
 
 // ClientMessage represents a message from client
@@ -43,7 +46,7 @@ type ServerMessage struct {
 }
 
 // New creates a new server
-func New(cfg *config.Config, roomManager *room.Manager) *Server {
+func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consumer) *Server {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
@@ -85,6 +88,7 @@ func New(cfg *config.Config, roomManager *room.Manager) *Server {
 		cfg:          cfg,
 		roomManager:  roomManager,
 		jwtValidator: auth.NewJWTValidator(cfg.JWT),
+		nats:         natsConsumer,
 	}
 
 	s.setupRoutes()
@@ -178,7 +182,12 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 	// Validate JWT
 	claims, err := s.jwtValidator.Validate(token)
 	if err != nil {
-		log.Warn().Err(err).Msg("JWT validation failed")
+		log.Warn().
+			Err(err).
+			Str("token_prefix", prefixToken(token)).
+			Str("iss", claimsIssuer(token)).
+			Strs("allowed_issuers", s.cfg.JWT.AllowedIssuers).
+			Msg("JWT validation failed")
 		metrics.AuthFailure.Inc()
 		c.WriteJSON(ServerMessage{
 			Type:      "error",
@@ -188,12 +197,11 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 		c.Close()
 		return
 	}
-
 	metrics.AuthSuccess.Inc()
 
 	// Ưu tiên lấy từ JWT claims, nếu không có thì lấy từ query
-	if claims.UserID != "" {
-		userID = claims.UserID
+	if claims.UserID != 0 {
+		userID = fmt.Sprintf("%d", claims.UserID)
 	}
 	if claims.BrandID != "" {
 		brandID = claims.BrandID
@@ -251,6 +259,24 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 
 	// Read loop
 	s.readLoop(conn)
+}
+
+func prefixToken(token string) string {
+	if len(token) <= 12 {
+		return token
+	}
+	return token[:12] + "..."
+}
+
+// claimsIssuer extracts issuer without verifying signature (best effort for logging)
+func claimsIssuer(tokenString string) string {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	claims := jwt.MapClaims{}
+	_, _ = parser.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) { return nil, nil })
+	if iss, ok := claims["iss"].(string); ok {
+		return iss
+	}
+	return ""
 }
 
 // readLoop reads messages from client
@@ -350,10 +376,39 @@ func (s *Server) handleClientMessage(conn *room.Connection, msg *ClientMessage) 
 		}
 
 	default:
+		// Forward other message types to NATS for backend consumers
+		event := nats.Event{
+			Type:          msg.Type,
+			Room:          msg.Room,
+			UserID:        conn.UserID,
+			BrandID:       conn.BrandID,
+			Payload:       msg.Payload,
+			Timestamp:     time.Now(),
+			ExcludeConnID: conn.ID,
+		}
+
+		data, err := json.Marshal(event)
+		if err != nil {
+			log.Error().Err(err).Str("conn_id", conn.ID).Msg("Failed to marshal event for NATS")
+			return
+		}
+
+		if s.nats == nil {
+			log.Warn().Str("conn_id", conn.ID).Msg("NATS publisher not configured")
+			return
+		}
+
+		subject := "CHAT.events"
+		if err := s.nats.Publish(subject, data); err != nil {
+			log.Error().Err(err).Str("conn_id", conn.ID).Str("subject", subject).Msg("Failed to publish to NATS")
+			return
+		}
+
 		log.Debug().
 			Str("conn_id", conn.ID).
+			Str("subject", subject).
 			Str("type", msg.Type).
-			Msg("Unknown message type")
+			Msg("Forwarded message to NATS")
 	}
 }
 
