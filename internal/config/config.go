@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -22,7 +25,7 @@ type ServerConfig struct {
 }
 
 type JWTConfig struct {
-	SecretKey      string
+	PublicKeyPEM   string
 	ValidateExp    bool
 	AllowedIssuers []string
 }
@@ -53,6 +56,10 @@ type WebSocketConfig struct {
 }
 
 func Load() (*Config, error) {
+	// Load local env file if present (for dev)
+	_ = godotenv.Load("env.local")
+	_ = godotenv.Load("./attchat-gateway-websocket/env.local")
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
@@ -81,7 +88,7 @@ func Load() (*Config, error) {
 			WriteTimeout: viper.GetDuration("server.write_timeout"),
 		},
 		JWT: JWTConfig{
-			SecretKey:      viper.GetString("jwt.secret_key"),
+			PublicKeyPEM:   viper.GetString("jwt.public_key"),
 			ValidateExp:    viper.GetBool("jwt.validate_exp"),
 			AllowedIssuers: viper.GetStringSlice("jwt.allowed_issuers"),
 		},
@@ -109,6 +116,46 @@ func Load() (*Config, error) {
 		},
 	}
 
+	// Allow loading public key from file if provided
+	if path := strings.TrimSpace(viper.GetString("jwt.public_key_file")); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			fmt.Printf("[DEBUG] loaded jwt.public_key_file=%s len=%d\n", path, len(data))
+			cfg.JWT.PublicKeyPEM = string(data)
+		} else {
+			fmt.Printf("[DEBUG] failed to read jwt.public_key_file=%s err=%v\n", path, err)
+			return nil, err
+		}
+	}
+	// Fallback: if still empty, try local defaults
+	if cfg.JWT.PublicKeyPEM == "" {
+		if data, err := os.ReadFile("jwt_dev_public.pem"); err == nil {
+			fmt.Printf("[DEBUG] loaded jwt_dev_public.pem from CWD len=%d\n", len(data))
+			cfg.JWT.PublicKeyPEM = string(data)
+		} else if data, err := os.ReadFile("./attchat-gateway-websocket/jwt_dev_public.pem"); err == nil {
+			fmt.Printf("[DEBUG] loaded ./attchat-gateway-websocket/jwt_dev_public.pem len=%d\n", len(data))
+			cfg.JWT.PublicKeyPEM = string(data)
+		} else {
+			fmt.Printf("[DEBUG] could not find jwt_dev_public.pem in fallback locations\n")
+		}
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		fmt.Printf("[DEBUG] cwd=%s\n", cwd)
+	}
+	fmt.Printf("[DEBUG] final jwt.public_key length=%d\n", len(cfg.JWT.PublicKeyPEM))
+
+	// Normalize streams: support comma-separated env
+	if len(cfg.NATS.Streams) == 1 && strings.Contains(cfg.NATS.Streams[0], ",") {
+		parts := strings.Split(cfg.NATS.Streams[0], ",")
+		var cleaned []string
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		cfg.NATS.Streams = cleaned
+	}
+
 	return cfg, nil
 }
 
@@ -119,7 +166,8 @@ func setDefaults() {
 	viper.SetDefault("server.write_timeout", "10s")
 
 	// JWT defaults
-	viper.SetDefault("jwt.secret_key", "change-me-in-production")
+	viper.SetDefault("jwt.public_key", "")
+	viper.SetDefault("jwt.public_key_file", "")
 	viper.SetDefault("jwt.validate_exp", true)
 	viper.SetDefault("jwt.allowed_issuers", []string{"attchat"})
 
@@ -129,7 +177,7 @@ func setDefaults() {
 	viper.SetDefault("nats.client_id", "gateway")
 	viper.SetDefault("nats.reconnect_wait", "2s")
 	viper.SetDefault("nats.max_reconnects", -1) // Unlimited
-	viper.SetDefault("nats.streams", []string{"CHAT", "NOTIFY"})
+	viper.SetDefault("nats.streams", []string{"CHAT", "NOTIFY", "ONLINE", "ANALYTICS", "AUDIT", "BILLING", "FILE", "EMAIL"})
 
 	// Metrics defaults
 	viper.SetDefault("metrics.port", "9090")

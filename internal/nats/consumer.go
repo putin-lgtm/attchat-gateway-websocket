@@ -3,6 +3,8 @@ package nats
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/attchat/attchat-gateway/internal/config"
@@ -15,14 +17,14 @@ import (
 
 // Event represents a message event from NATS
 type Event struct {
-	Type      string          `json:"type"`
-	Room      string          `json:"room"`
-	UserID    string          `json:"user_id,omitempty"`
-	BrandID   string          `json:"brand_id,omitempty"`
-	ChatID    string          `json:"chat_id,omitempty"`
-	Payload   json.RawMessage `json:"payload"`
-	Timestamp time.Time       `json:"timestamp"`
-	ExcludeConnID string      `json:"exclude_conn_id,omitempty"`
+	Type          string          `json:"type"`
+	Room          string          `json:"room"`
+	UserID        string          `json:"user_id,omitempty"`
+	BrandID       string          `json:"brand_id,omitempty"`
+	ChatID        string          `json:"chat_id,omitempty"`
+	Payload       json.RawMessage `json:"payload"`
+	Timestamp     time.Time       `json:"timestamp"`
+	ExcludeConnID string          `json:"exclude_conn_id,omitempty"`
 }
 
 // Consumer consumes messages from NATS JetStream
@@ -63,6 +65,28 @@ func NewConsumer(cfg config.NATSConfig, roomManager *room.Manager) (*Consumer, e
 	if err != nil {
 		nc.Close()
 		return nil, err
+	}
+
+	// Ensure streams exist
+	for _, raw := range cfg.Streams {
+		streamName := strings.TrimSpace(raw)
+		if streamName == "" {
+			continue
+		}
+		_, err := js.Stream(context.Background(), streamName)
+		if err != nil {
+			_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{
+				Name:      streamName,
+				Subjects:  []string{streamName + ".>"},
+				Storage:   jetstream.FileStorage,
+				Retention: jetstream.LimitsPolicy,
+			})
+			if err != nil {
+				nc.Close()
+				return nil, fmt.Errorf("failed to create stream %s: %w", streamName, err)
+			}
+			log.Info().Str("stream", streamName).Msg("Created NATS stream")
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,4 +226,3 @@ func (c *Consumer) Close() {
 	c.cancel()
 	c.nc.Close()
 }
-

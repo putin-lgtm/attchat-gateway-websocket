@@ -51,7 +51,10 @@ func main() {
 	go natsConsumer.Start()
 
 	// Initialize and start HTTP/WebSocket server
-	srv := server.New(cfg, roomManager, natsConsumer)
+	srv, err := server.New(cfg, roomManager, natsConsumer)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to init server")
+	}
 	go srv.Start()
 
 	// Graceful shutdown

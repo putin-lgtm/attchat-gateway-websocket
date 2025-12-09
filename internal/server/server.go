@@ -46,7 +46,7 @@ type ServerMessage struct {
 }
 
 // New creates a new server
-func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consumer) *Server {
+func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consumer) (*Server, error) {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
@@ -83,17 +83,22 @@ func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consu
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
+	validator, err := auth.NewJWTValidator(cfg.JWT)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
 		app:          app,
 		cfg:          cfg,
 		roomManager:  roomManager,
-		jwtValidator: auth.NewJWTValidator(cfg.JWT),
+		jwtValidator: validator,
 		nats:         natsConsumer,
 	}
 
 	s.setupRoutes()
 
-	return s
+	return s, nil
 }
 
 // setupRoutes configures all routes
