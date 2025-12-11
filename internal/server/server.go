@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
-
-	ncontext "context"
 
 	"github.com/attchat/attchat-gateway/internal/auth"
 	"github.com/attchat/attchat-gateway/internal/config"
@@ -21,6 +20,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+	cpuutil "github.com/shirou/gopsutil/v3/cpu"
+	memutil "github.com/shirou/gopsutil/v3/mem"
+	netutil "github.com/shirou/gopsutil/v3/net"
 )
 
 // Server represents the WebSocket server
@@ -31,6 +33,16 @@ type Server struct {
 	jwtValidator *auth.JWTValidator
 	nats         *nats.Consumer
 }
+
+type netSample struct {
+	bytes uint64
+	time  time.Time
+}
+
+var (
+	netMu         sync.Mutex
+	lastNetSample netSample
+)
 
 // ClientMessage represents a message from client
 type ClientMessage struct {
@@ -108,6 +120,7 @@ func (s *Server) setupRoutes() {
 	// Root endpoint trả về thông tin health
 	s.app.Get("/", func(c *fiber.Ctx) error {
 		streams, consumers := s.jetStreamCounts()
+		sys := systemMetrics()
 		return c.JSON(fiber.Map{
 			"architecture": "MVC Enterprise",
 			"jetstream":    "ok",
@@ -120,11 +133,13 @@ func (s *Server) setupRoutes() {
 			"status":  "healthy",
 			"version": "2.0",
 			"stats":   s.roomManager.GetStats(),
+			"system":  sys,
 		})
 	})
 	// Health check
 	s.app.Get("/health", func(c *fiber.Ctx) error {
 		streams, consumers := s.jetStreamCounts()
+		sys := systemMetrics()
 		return c.JSON(fiber.Map{
 			"architecture": "MVC Enterprise",
 			"jetstream":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
@@ -137,6 +152,7 @@ func (s *Server) setupRoutes() {
 			"status":  "healthy",
 			"version": "2.0",
 			"stats":   s.roomManager.GetStats(),
+			"system":  sys,
 		})
 	})
 
@@ -272,7 +288,7 @@ func (s *Server) jetStreamCounts() (streams int64, consumers int64) {
 	if s.nats == nil {
 		return 0, 0
 	}
-	ctx, cancel := ncontext.WithTimeout(ncontext.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	streams, consumers, err := s.nats.AccountStats(ctx)
 	if err != nil {
@@ -280,6 +296,90 @@ func (s *Server) jetStreamCounts() (streams int64, consumers int64) {
 		return 0, 0
 	}
 	return streams, consumers
+}
+
+type systemInfo struct {
+	CPUPercent string `json:"cpu_used_percent"`
+	RAMPercent string `json:"ram_used_percent"`
+	RAMUsedMB  string `json:"ram_used_mb"`
+	NetMbps    string `json:"net_mbps"`
+}
+
+func systemMetrics() systemInfo {
+	cpuP := cpuPercent()
+	memP, memUsed := memStats()
+	netMbps := netThroughputMbps()
+	return systemInfo{
+		CPUPercent: fmtPercent(cpuP),
+		RAMPercent: fmtPercent(memP),
+		RAMUsedMB:  fmtMB(memUsed),
+		NetMbps:    fmtMbps(netMbps),
+	}
+}
+
+func fmtPercent(v float64) string {
+	if v < 0 {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.2f%%", v)
+}
+
+func fmtMB(v float64) string {
+	if v < 0 {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.2f MB", v)
+}
+
+func fmtMbps(v float64) string {
+	if v < 0 {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.2f Mbps", v)
+}
+
+func cpuPercent() float64 {
+	perc, err := cpuutil.Percent(0, false)
+	if err != nil || len(perc) == 0 {
+		return -1
+	}
+	return perc[0]
+}
+
+func memStats() (percent float64, usedMB float64) {
+	vm, err := memutil.VirtualMemory()
+	if err != nil {
+		return -1, -1
+	}
+	return vm.UsedPercent, float64(vm.Used) / (1024 * 1024)
+}
+
+func netThroughputMbps() float64 {
+	counters, err := netutil.IOCounters(true)
+	if err != nil || len(counters) == 0 {
+		return -1
+	}
+	var total uint64
+	for _, c := range counters {
+		total += c.BytesRecv + c.BytesSent
+	}
+	now := time.Now()
+
+	netMu.Lock()
+	defer netMu.Unlock()
+
+	if lastNetSample.time.IsZero() {
+		lastNetSample = netSample{bytes: total, time: now}
+		return 0
+	}
+	deltaBytes := total - lastNetSample.bytes
+	elapsed := now.Sub(lastNetSample.time).Seconds()
+	lastNetSample = netSample{bytes: total, time: now}
+	if elapsed <= 0 {
+		return 0
+	}
+	mbps := (float64(deltaBytes) * 8) / (elapsed * 1_000_000) // bytes -> bits -> megabits
+	return mbps
 }
 
 func prefixToken(token string) string {
