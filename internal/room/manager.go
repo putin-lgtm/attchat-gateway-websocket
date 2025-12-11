@@ -209,9 +209,17 @@ func (m *Manager) BroadcastToUser(userID string, message []byte, excludeConnID s
 
 // GetStats returns current statistics
 func (m *Manager) GetStats() map[string]int64 {
+	// Count current live connections (sync.Map length)
+	var current int64
+	m.connections.Range(func(_, _ interface{}) bool {
+		current++
+		return true
+	})
+
 	return map[string]int64{
-		"total_connections": atomic.LoadInt64(&m.totalConnections),
-		"total_rooms":       atomic.LoadInt64(&m.totalRooms),
+		"total_connections":   atomic.LoadInt64(&m.totalConnections),
+		"current_connections": current,
+		"total_rooms":         atomic.LoadInt64(&m.totalRooms),
 	}
 }
 

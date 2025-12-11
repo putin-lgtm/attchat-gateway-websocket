@@ -215,6 +215,18 @@ func (c *Consumer) routeEvent(event *Event) {
 	}
 }
 
+// AccountStats returns JetStream account streams/consumers counts.
+func (c *Consumer) AccountStats(ctx context.Context) (streams int64, consumers int64, err error) {
+	if c == nil || c.js == nil {
+		return 0, 0, fmt.Errorf("jetstream not initialized")
+	}
+	info, err := c.js.AccountInfo(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int64(info.Streams), int64(info.Consumers), nil
+}
+
 // Publish publishes a message to NATS (for forwarding client messages)
 func (c *Consumer) Publish(subject string, data []byte) error {
 	_, err := c.js.Publish(c.ctx, subject, data)

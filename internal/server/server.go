@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	ncontext "context"
+
 	"github.com/attchat/attchat-gateway/internal/auth"
 	"github.com/attchat/attchat-gateway/internal/config"
 	"github.com/attchat/attchat-gateway/internal/metrics"
@@ -105,13 +107,13 @@ func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consu
 func (s *Server) setupRoutes() {
 	// Root endpoint trả về thông tin health
 	s.app.Get("/", func(c *fiber.Ctx) error {
+		streams, consumers := s.jetStreamCounts()
 		return c.JSON(fiber.Map{
 			"architecture": "MVC Enterprise",
 			"jetstream":    "ok",
 			"jetstream_info": fiber.Map{
-				"consumers": 0,
-				"messages":  0,
-				"stream":    "CHAT",
+				"consumers": consumers,
+				"streams":   streams,
 			},
 			"message": "ATTChat Gateway WebSocket is running",
 			"nats":    "ok",
@@ -122,13 +124,13 @@ func (s *Server) setupRoutes() {
 	})
 	// Health check
 	s.app.Get("/health", func(c *fiber.Ctx) error {
+		streams, consumers := s.jetStreamCounts()
 		return c.JSON(fiber.Map{
 			"architecture": "MVC Enterprise",
 			"jetstream":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
 			"jetstream_info": fiber.Map{
-				"consumers": 0,      // Có thể lấy từ metrics nếu có
-				"messages":  0,      // Có thể lấy từ metrics nếu có
-				"stream":    "CHAT", // hoặc tên stream thực tế
+				"consumers": consumers, // Có thể lấy từ metrics nếu có
+				"streams":   streams,   // hoặc tên stream thực tế
 			},
 			"message": "ATTChat Gateway WebSocket is running",
 			"nats":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
@@ -264,6 +266,20 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 
 	// Read loop
 	s.readLoop(conn)
+}
+
+func (s *Server) jetStreamCounts() (streams int64, consumers int64) {
+	if s.nats == nil {
+		return 0, 0
+	}
+	ctx, cancel := ncontext.WithTimeout(ncontext.Background(), 2*time.Second)
+	defer cancel()
+	streams, consumers, err := s.nats.AccountStats(ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get JetStream account info")
+		return 0, 0
+	}
+	return streams, consumers
 }
 
 func prefixToken(token string) string {
