@@ -193,6 +193,7 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 	}
 
 	userType := c.Query("user_type")
+	streamType := c.Query("type")
 	role := c.Query("role")
 	device := c.Query("device")
 	tags := c.Query("tags")
@@ -234,6 +235,10 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 	}
 	if claims.Type != "" {
 		userType = claims.Type
+	}
+	// Override type from query ?type=<stream>
+	if streamType != "" {
+		userType = streamType
 	}
 
 	// Create connection với metadata mở rộng
