@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
+	docs "github.com/attchat/attchat-gateway/docs"
 	"github.com/attchat/attchat-gateway/internal/auth"
 	"github.com/attchat/attchat-gateway/internal/config"
 	"github.com/attchat/attchat-gateway/internal/metrics"
@@ -17,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	recovermw "github.com/gofiber/fiber/v2/middleware/recover"
+	fiberswagger "github.com/gofiber/swagger"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -44,6 +48,8 @@ var (
 	lastNetSample netSample
 )
 
+var roomIDPattern = regexp.MustCompile(`^[A-Za-z0-9:_-]{1,128}$`)
+
 // ClientMessage represents a message from client
 type ClientMessage struct {
 	Type    string          `json:"type"`
@@ -65,6 +71,10 @@ func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consu
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 	})
+
+	docs.SwaggerInfo.Title = "ATTChat Gateway WebSocket"
+	docs.SwaggerInfo.Version = "2.0"
+	docs.SwaggerInfo.BasePath = "/"
 
 	// Middleware
 	app.Use(recovermw.New())
@@ -118,43 +128,11 @@ func New(cfg *config.Config, roomManager *room.Manager, natsConsumer *nats.Consu
 // setupRoutes configures all routes
 func (s *Server) setupRoutes() {
 	// Root endpoint trả về thông tin health
-	s.app.Get("/", func(c *fiber.Ctx) error {
-		streams, consumers := s.jetStreamCounts()
-		sys := systemMetrics()
-		return c.JSON(fiber.Map{
-			"architecture": "MVC Enterprise",
-			"jetstream":    "ok",
-			"jetstream_info": fiber.Map{
-				"consumers": consumers,
-				"streams":   streams,
-			},
-			"message": "ATTChat Gateway WebSocket is running",
-			"nats":    "ok",
-			"status":  "healthy",
-			"version": "2.0",
-			"stats":   s.roomManager.GetStats(),
-			"system":  sys,
-		})
-	})
+	s.app.Get("/", s.rootHandler)
+	// Swagger UI
+	s.app.Get("/swagger/*", fiberswagger.HandlerDefault)
 	// Health check
-	s.app.Get("/health", func(c *fiber.Ctx) error {
-		streams, consumers := s.jetStreamCounts()
-		sys := systemMetrics()
-		return c.JSON(fiber.Map{
-			"architecture": "MVC Enterprise",
-			"jetstream":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
-			"jetstream_info": fiber.Map{
-				"consumers": consumers, // Có thể lấy từ metrics nếu có
-				"streams":   streams,   // hoặc tên stream thực tế
-			},
-			"message": "ATTChat Gateway WebSocket is running",
-			"nats":    "ok", // Giả sử luôn ok, có thể kiểm tra thực tế nếu cần
-			"status":  "healthy",
-			"version": "2.0",
-			"stats":   s.roomManager.GetStats(),
-			"system":  sys,
-		})
-	})
+	s.app.Get("/health", s.healthHandler)
 
 	// Ready check
 	s.app.Get("/ready", func(c *fiber.Ctx) error {
@@ -256,9 +234,21 @@ func (s *Server) handleWebSocket(c *websocket.Conn) {
 
 	// Join room từ query hoặc JWT
 	if roomID != "" {
+		if !isValidRoomID(roomID) {
+			c.WriteJSON(ServerMessage{
+				Type:      "error",
+				Payload:   json.RawMessage(`{"code": "INVALID_ROOM", "message": "invalid room_id"}`),
+				Timestamp: time.Now(),
+			})
+			c.Close()
+			return
+		}
 		s.roomManager.JoinRoom(connID, roomID)
 	}
 	for _, r := range claims.Rooms {
+		if !isValidRoomID(r) {
+			continue
+		}
 		s.roomManager.JoinRoom(connID, r)
 	}
 
@@ -301,6 +291,56 @@ func (s *Server) jetStreamCounts() (streams int64, consumers int64) {
 		return 0, 0
 	}
 	return streams, consumers
+}
+
+// rootHandler returns root info
+// @Summary Root info
+// @Tags info
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router / [get]
+func (s *Server) rootHandler(c *fiber.Ctx) error {
+	streams, consumers := s.jetStreamCounts()
+	sys := systemMetrics()
+	return c.JSON(fiber.Map{
+		"architecture": "MVC Enterprise",
+		"jetstream":    "ok",
+		"jetstream_info": fiber.Map{
+			"consumers": consumers,
+			"streams":   streams,
+		},
+		"message": "ATTChat Gateway WebSocket is running",
+		"nats":    "ok",
+		"status":  "healthy",
+		"version": "2.0",
+		"stats":   s.roomManager.GetStats(),
+		"system":  sys,
+	})
+}
+
+// healthHandler returns health info
+// @Summary Health check
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /health [get]
+func (s *Server) healthHandler(c *fiber.Ctx) error {
+	streams, consumers := s.jetStreamCounts()
+	sys := systemMetrics()
+	return c.JSON(fiber.Map{
+		"architecture": "MVC Enterprise",
+		"jetstream":    "ok",
+		"jetstream_info": fiber.Map{
+			"consumers": consumers,
+			"streams":   streams,
+		},
+		"message": "ATTChat Gateway WebSocket is running",
+		"nats":    "ok",
+		"status":  "healthy",
+		"version": "2.0",
+		"stats":   s.roomManager.GetStats(),
+		"system":  sys,
+	})
 }
 
 type systemInfo struct {
@@ -394,6 +434,10 @@ func prefixToken(token string) string {
 	return token[:12] + "..."
 }
 
+func isValidRoomID(room string) bool {
+	return roomIDPattern.MatchString(room)
+}
+
 // claimsIssuer extracts issuer without verifying signature (best effort for logging)
 func claimsIssuer(tokenString string) string {
 	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
@@ -477,6 +521,10 @@ func (s *Server) handleClientMessage(conn *room.Connection, msg *ClientMessage) 
 	case "join":
 		// Join a room
 		if msg.Room != "" {
+			if !isValidRoomID(msg.Room) {
+				conn.Send([]byte(`{"type":"error","code":"INVALID_ROOM","message":"invalid room_id"}`))
+				return
+			}
 			s.roomManager.JoinRoom(conn.ID, msg.Room)
 			conn.Send([]byte(`{"type":"joined","room":"` + msg.Room + `"}`))
 		}
@@ -503,6 +551,10 @@ func (s *Server) handleClientMessage(conn *room.Connection, msg *ClientMessage) 
 
 	default:
 		// Forward other message types to NATS for backend consumers
+		stream := strings.ToLower(conn.Type)
+		if stream == "" {
+			stream = "chat"
+		}
 		event := nats.Event{
 			Type:          msg.Type,
 			Room:          msg.Room,
@@ -524,7 +576,7 @@ func (s *Server) handleClientMessage(conn *room.Connection, msg *ClientMessage) 
 			return
 		}
 
-		subject := "CHAT.events"
+		subject := fmt.Sprintf("%s.events", stream)
 		if err := s.nats.Publish(subject, data); err != nil {
 			log.Error().Err(err).Str("conn_id", conn.ID).Str("subject", subject).Msg("Failed to publish to NATS")
 			return
